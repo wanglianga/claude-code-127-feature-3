@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { api, yuan, TYPE_LABEL, RENTAL_STATUS, ITEM_STATUS, DAMAGE_TYPES, uploadPhoto } from '../api.js'
+import { api, yuan, TYPE_LABEL, RENTAL_STATUS, ITEM_STATUS, DAMAGE_TYPES, NOTIF_STATUS, uploadPhoto } from '../api.js'
 import { Badge, Modal, Field, useToast, Empty, Loading } from './ui.jsx'
 
 function statusBadge(s) {
@@ -92,6 +92,15 @@ export default function RentalDetail({ id, onClose, onChanged, asGuest, canAsses
               </>
             )}
             {r.status === 'return_pending' && <Badge color="orange">已在归还队列，请等待柜台叫号验具</Badge>}
+            {r.status === 'quick_signed' && (
+              <div className="alert info small" style={{ margin: 0 }}>
+                <b>⚡ 已快速签收（赶班车通道）</b>
+                <div>雪具已转维修间待检，押金继续冻结；后检如有损坏将发赔付通知，
+                  申诉期至 <b>{r.appeal_deadline ? String(r.appeal_deadline).slice(0, 16) : '—'}</b>，
+                  通知可在「后检赔付通知」页确认或申诉。</div>
+                <div className="muted">留存联系方式：{r.contact_phone || r.guest_phone}</div>
+              </div>
+            )}
             {r.status === 'returned' && !r.feedback && <FeedbackBtn rental={r} onDone={load} />}
             {r.status === 'returned' && r.feedback && <Badge color="green">已评价 {r.feedback.rating} 星</Badge>}
           </div>
@@ -117,6 +126,25 @@ export default function RentalDetail({ id, onClose, onChanged, asGuest, canAsses
               {d.photos?.length > 0 && <div className="photos" style={{ marginTop: 6 }}>
                 {d.photos.map((p, i) => <img key={i} src={p} alt="损坏照片" />)}
               </div>}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* 快签后检赔付通知 */}
+      {r.notifications?.length > 0 && (
+        <>
+          <h4>后检赔付通知（快速签收）</h4>
+          {r.notifications.map(n => (
+            <div key={n.id} className="alert warn small">
+              通知 #{n.id}：拟扣减 <b className="danger-text">{yuan(n.amount)}</b>
+              <Badge color={n.status === 'pending' ? 'orange' : n.status === 'appealed' ? 'purple' : n.status === 'confirmed' ? 'red' : 'green'}
+                >{NOTIF_STATUS[n.status] || n.status}</Badge>
+              <span className="muted"> · 申诉截止 {n.appeal_until}</span>
+              {n.appeal_reason && <div>申诉理由：{n.appeal_reason}</div>}
+              {n.review_note && <div>复核说明：{n.review_note}</div>}
+              {asGuest && n.status === 'pending' &&
+                <div className="small" style={{ marginTop: 4 }}>请到「后检赔付通知」页确认或申诉。</div>}
             </div>
           ))}
         </>
@@ -161,7 +189,7 @@ export default function RentalDetail({ id, onClose, onChanged, asGuest, canAsses
 
 function riColor(s) {
   return { out: 'green', returned_ok: 'gray', returned_damaged: 'red', repair: 'orange',
-    lost: 'red', assigned: 'blue', exchanged: 'purple' }[s] || 'gray'
+    lost: 'red', assigned: 'blue', exchanged: 'purple', pending_inspection: 'cyan' }[s] || 'gray'
 }
 function fitBadge(f) {
   if (f === 'ok') return <Badge color="green">✓ 合适合规</Badge>

@@ -1,6 +1,9 @@
 package rules
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSuggestSkiBeginner(t *testing.T) {
 	s := SuggestSki(Profile{HeightCM: 170, WeightKG: 65, Level: "beginner"})
@@ -132,5 +135,23 @@ func TestLateFeeAndNight(t *testing.T) {
 	}
 	if LateFee(0, 400) != 0 {
 		t.Fatal("zero hours = zero fee")
+	}
+}
+
+func TestAppealDeadline(t *testing.T) {
+	// 默认 48 小时
+	d := AppealDeadline(0)
+	if hrs := time.Until(d).Hours(); hrs < 47.9 || hrs > 48.1 {
+		t.Fatalf("默认申诉期应约 48h，实际 %.2f", hrs)
+	}
+	// 自定义 2 小时
+	d = AppealDeadline(2)
+	if hrs := time.Until(d).Hours(); hrs < 1.9 || hrs > 2.1 {
+		t.Fatalf("自定义申诉期应约 2h，实际 %.2f", hrs)
+	}
+	// 超上限回落默认
+	d = AppealDeadline(9999)
+	if hrs := time.Until(d).Hours(); hrs < 47.9 || hrs > 48.1 {
+		t.Fatalf("超上限应回落 48h，实际 %.2f", hrs)
 	}
 }

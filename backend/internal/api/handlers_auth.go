@@ -137,13 +137,19 @@ func (s *Server) listInsuranceProducts(w http.ResponseWriter, r *http.Request) {
 	) t`)
 }
 
-// 各队列实时人数（柜台大屏 / 员工首页）
+// 各队列实时人数（柜台大屏 / 员工首页），含待检雪具与维修间容量占用
 func (s *Server) queueSummary(w http.ResponseWriter, r *http.Request) {
 	s.oneJSON(w, `SELECT json_build_object(
 		'pickup',      (SELECT count(*) FROM queue_tickets WHERE queue_type='pickup' AND status IN ('waiting','called','serving')),
 		'exchange',    (SELECT count(*) FROM queue_tickets WHERE queue_type='exchange' AND status IN ('waiting','called','serving')),
 		'return_day',  (SELECT count(*) FROM queue_tickets WHERE queue_type='return_day' AND status IN ('waiting','called','serving')),
 		'return_night',(SELECT count(*) FROM queue_tickets WHERE queue_type='return_night' AND status IN ('waiting','called','serving')),
-		'damage',      (SELECT count(*) FROM queue_tickets WHERE queue_type='damage' AND status IN ('waiting','called','serving'))
+		'damage',      (SELECT count(*) FROM queue_tickets WHERE queue_type='damage' AND status IN ('waiting','called','serving')),
+		'inspection_pending', (SELECT count(*) FROM equipment_items WHERE status='inspection'),
+		'repair_active',(SELECT count(*) FROM repair_orders WHERE status IN ('queued','in_progress','waiting_part')),
+		'inspect_capacity', (SELECT inspect_capacity FROM repair_capacity WHERE id=1),
+		'repair_capacity',  (SELECT repair_capacity FROM repair_capacity WHERE id=1),
+		'quick_sign_open',  (SELECT count(*) FROM rentals WHERE status='quick_signed'),
+		'appeal_open',      (SELECT count(*) FROM damage_notifications WHERE status='appealed')
 	)`)
 }

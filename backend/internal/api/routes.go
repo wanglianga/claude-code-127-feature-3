@@ -35,6 +35,10 @@ func (s *Server) registerRoutes() {
 	s.add("POST", "/api/rentals/{id}/damage", authGuest(s.reportDamage))
 	s.add("POST", "/api/rentals/{id}/queue-return", authGuest(s.queueReturn))
 	s.add("POST", "/api/rentals/{id}/feedback", authGuest(s.submitFeedback))
+	// 快签后检赔付通知（游客确认/申诉）
+	s.add("GET", "/api/guest/notifications", authGuest(s.myNotifications))
+	s.add("POST", "/api/guest/notifications/{id}/confirm", authGuest(s.confirmNotification))
+	s.add("POST", "/api/guest/notifications/{id}/appeal", authGuest(s.appealNotification))
 
 	// 柜台
 	s.add("GET", "/api/counter/queue", authCounter(s.counterQueue))
@@ -46,6 +50,10 @@ func (s *Server) registerRoutes() {
 	s.add("POST", "/api/counter/damages/{id}/assess", authCounter(s.assessDuringRental))
 	s.add("POST", "/api/counter/returns/{rid}/inspect", authCounter(s.inspectReturnItem))
 	s.add("POST", "/api/counter/returns/{rid}/finish", authCounter(s.finishReturn))
+	// 高峰快速签收与申诉复核
+	s.add("POST", "/api/counter/returns/{rid}/quick-sign", authCounter(s.quickSignReturn))
+	s.add("GET", "/api/counter/appeals", authCounter(s.listAppeals))
+	s.add("POST", "/api/counter/appeals/{id}/review", authCounter(s.reviewAppeal))
 
 	// 教练
 	s.add("GET", "/api/coach/courses", authCoach(s.coachCourses))
@@ -57,6 +65,11 @@ func (s *Server) registerRoutes() {
 	s.add("GET", "/api/repair/maintenance", authRepair(s.listMaintenance))
 	s.add("POST", "/api/repair/maintenance/generate", authRepair(s.generateMaintenance))
 	s.add("POST", "/api/repair/maintenance/{id}/resolve", authRepair(s.resolveMaintenance))
+	// 待检区与后检（高峰快签）
+	s.add("GET", "/api/repair/pending-inspections", staff(s.pendingInspections))
+	s.add("POST", "/api/repair/inspections/{id}/resolve", authRepair(s.postInspect))
+	s.add("GET", "/api/repair/capacity", staff(s.repairCapacity))
+	s.add("POST", "/api/repair/capacity", authRepair(s.updateRepairCapacity))
 
 	// 保险
 	s.add("GET", "/api/insurance/claims", authIns(s.listClaims))

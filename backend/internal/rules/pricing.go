@@ -1,9 +1,25 @@
 package rules
 
+import "time"
+
 // 费用与赔付规则
 
 // 夜场加价系数（夜场租赁每件租金上浮 20%，押金不变）
 const NightPremiumRate = 0.20
+
+// AppealWindowHours 快速签收后检赔付通知的默认申诉期限（小时）
+const AppealWindowHours = 48
+
+// AppealMaxHours 申诉期限上限（小时），防止柜台误填过长
+const AppealMaxHours = 168
+
+// AppealDeadline 计算申诉截止时间；hours<=0 或超上限时回落到默认 48 小时
+func AppealDeadline(hours float64) time.Time {
+	if hours <= 0 || hours > AppealMaxHours {
+		hours = AppealWindowHours
+	}
+	return time.Now().Add(time.Duration(hours * float64(time.Hour)))
+}
 
 // 延时费用：每超时 1 小时按基础租金/4 加收（取日租金 4 小时折算）
 func LateFee(hours float64, baseRentalFee float64) float64 {

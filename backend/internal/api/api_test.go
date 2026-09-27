@@ -23,6 +23,7 @@ import (
 var (
 	ts     *httptest.Server
 	client = &http.Client{}
+	testDB *sql.DB
 )
 
 const testDBName = "skirental_test"
@@ -64,10 +65,11 @@ func setup() error {
 
 	target := *u
 	target.Path = "/" + testDBName
-	testDB, err := db.Open(target.String())
+	database, err := db.Open(target.String())
 	if err != nil {
 		return err
 	}
+	testDB = database
 	if err := db.Migrate(testDB); err != nil {
 		return err
 	}

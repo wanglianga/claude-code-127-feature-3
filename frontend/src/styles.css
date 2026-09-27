@@ -215,3 +215,14 @@ tr:hover td { background: #fafdff; }
 .seg button.on { background: var(--brand); color: #fff; }
 .empty { text-align: center; color: var(--muted); padding: 36px 0; }
 .clickable { cursor: pointer; }
+
+/* 高峰归还：待检/维修容量条 */
+.capacity-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; }
+.cap-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.cap-item .cap-k { color: var(--muted); }
+.cap-item b { font-size: 15px; }
+.cap-track { width: 90px; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; }
+.cap-fill { height: 100%; background: #22c55e; border-radius: 4px; transition: width .3s; }
+.cap-full .cap-fill { background: #ef4444; }
+.cap-full b { color: #dc2626; }

@@ -69,14 +69,19 @@ func (s *Server) updateRepairOrder(w http.ResponseWriter, r *http.Request) {
 		tx.Exec(`UPDATE rental_items SET status='returned_damaged'
 			WHERE status='repair' AND item_id=$1`, itemID)
 		if damageID > 0 {
-			tx.Exec(`UPDATE damage_reports SET status='closed' WHERE id=$1 AND claim_id IS NULL`, damageID)
+			// 后检报告在赔付通知未决前保持打开，游客确认/申诉复核后由通知链路闭环
+			tx.Exec(`UPDATE damage_reports SET status='closed' WHERE id=$1 AND claim_id IS NULL
+				AND NOT EXISTS(SELECT 1 FROM damage_notifications dn
+					WHERE dn.damage_id=damage_reports.id AND dn.status IN ('pending','appealed'))`, damageID)
 		}
 	case "scrapped":
 		tx.Exec(`UPDATE equipment_items SET status='retired' WHERE id=$1`, itemID)
 		tx.Exec(`UPDATE rental_items SET status='returned_damaged'
 			WHERE status='repair' AND item_id=$1`, itemID)
 		if damageID > 0 {
-			tx.Exec(`UPDATE damage_reports SET status='closed' WHERE id=$1`, damageID)
+			tx.Exec(`UPDATE damage_reports SET status='closed' WHERE id=$1
+				AND NOT EXISTS(SELECT 1 FROM damage_notifications dn
+					WHERE dn.damage_id=damage_reports.id AND dn.status IN ('pending','appealed'))`, damageID)
 		}
 	}
 	if err := tx.Commit(); err != nil {

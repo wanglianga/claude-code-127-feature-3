@@ -2,15 +2,21 @@ package api
 
 import "net/http"
 
-// 财务总览：租金/保费收入、押金扣减、保险冲抵、维修支出、应退押金
+// 财务总览：租金/保费收入、押金扣减、保险冲抵、维修支出、应退押金、快签待释放押金
 func (s *Server) financeSummary(w http.ResponseWriter, r *http.Request) {
+	s.releaseDueQuickSigns() // 申诉期已过的快签单先懒结算，保证押金口径实时
 	s.oneJSON(w, `SELECT json_build_object(
 		'rental_fee_income', COALESCE((SELECT sum(fee_total) FROM rentals
 			WHERE status='returned'),0),
 		'premium_income', COALESCE((SELECT sum(premium_total) FROM rentals
 			WHERE status='returned'),0),
 		'deposit_held_open', COALESCE((SELECT sum(deposit_total) FROM rentals
-			WHERE status IN ('reserved','equipped','return_pending')),0),
+			WHERE status IN ('reserved','equipped','return_pending','quick_signed')),0),
+		'quick_sign_held', COALESCE((SELECT sum(deposit_total) FROM rentals
+			WHERE status='quick_signed'),0),
+		'quick_sign_open', (SELECT count(*) FROM rentals WHERE status='quick_signed'),
+		'notify_pending', (SELECT count(*) FROM damage_notifications WHERE status='pending'),
+		'appeal_open', (SELECT count(*) FROM damage_notifications WHERE status='appealed'),
 		'damage_deducted', COALESCE((SELECT sum(amount) FROM deposit_transactions
 			WHERE type='deduct_damage'),0),
 		'lost_deducted', COALESCE((SELECT sum(amount) FROM deposit_transactions
@@ -23,7 +29,7 @@ func (s *Server) financeSummary(w http.ResponseWriter, r *http.Request) {
 			WHERE type='refund'),0),
 		'repair_cost', COALESCE((SELECT sum(repair_cost) FROM repair_orders),0),
 		'open_rentals', (SELECT count(*) FROM rentals
-			WHERE status IN ('reserved','equipped','return_pending'))
+			WHERE status IN ('reserved','equipped','return_pending','quick_signed'))
 	)`)
 }
 

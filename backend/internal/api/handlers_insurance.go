@@ -151,6 +151,14 @@ func (s *Server) payClaim(w http.ResponseWriter, r *http.Request) {
 		tx.Exec(`INSERT INTO deposit_transactions(rental_id, type, amount, damage_id, claim_id, note, created_by)
 			VALUES ($1,'insurance_offset',$2,$3,$4,'保险理赔到账，返还对应押金扣减',$5)`,
 			rentalID.Int64, payout, damageID, id, c.UserID)
+		// 快签单可能在赔付到账前已完成押金结算：补一笔实际退还，保证钱与流水一致
+		var settled bool
+		tx.QueryRow(`SELECT status='returned' FROM rentals WHERE id=$1`, rentalID.Int64).Scan(&settled)
+		if settled {
+			tx.Exec(`INSERT INTO deposit_transactions(rental_id, type, amount, damage_id, claim_id, note, created_by)
+				VALUES ($1,'refund',$2,$3,$4,'保险理赔晚于结算到账，补退对应金额',$5)`,
+				rentalID.Int64, payout, damageID, id, c.UserID)
+		}
 	}
 	if damageID.Valid {
 		tx.Exec(`UPDATE damage_reports SET status='closed' WHERE id=$1`, damageID.Int64)

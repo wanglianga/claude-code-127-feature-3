@@ -285,6 +285,61 @@ func Run(d *sql.DB) error {
 	tx.Exec(`INSERT INTO queue_tickets(rental_id, queue_type, ticket_no)
 		VALUES ($1,'return_night','N001')`, rC)
 
+	// ---------- 示例订单 D：高峰快速签收（后检中 + 一条待游客确认的赔付通知） ----------
+	g7 := mkUser("13900000007", "赵敏（赶班车）", "guest", 165, 55, 38.5, 56, "intermediate")
+	var counterUID, repairUID int64
+	tx.QueryRow(`SELECT id FROM users WHERE phone='13800000003'`).Scan(&counterUID)
+	tx.QueryRow(`SELECT id FROM users WHERE phone='13800000004'`).Scan(&repairUID)
+	var rD int64
+	tx.QueryRow(`INSERT INTO rentals
+		(code, guest_id, course_id, ticket_no, session_type, status,
+		 deposit_total, fee_total, pickup_at, return_due_at,
+		 quick_signed_at, quick_signed_by, contact_phone, appeal_deadline)
+		VALUES ('R-DEMO-D',$1,$2,'T20260104','day','quick_signed',
+		 (1500+500+300+150+400),(300+100+60+40+80), now()-interval '6 hour', now()+interval '2 hour',
+		 now()-interval '1 hour', $3, '13900000007', now()+interval '47 hour')
+		RETURNING id`, g7, dayCourse, counterUID).Scan(&rD)
+	addLines(tx, rD, []lineSpec{
+		{"ski", "SKI150", "150cm", 300, 1500},
+		{"boot", "BOOT38H", "EU38.5", 100, 500},
+		{"helmet", "HELMM", "M", 60, 300},
+		{"pole", "POLE110", "110cm", 40, 150},
+		{"protector", "PROTM", "M", 80, 400},
+	}, "out")
+	assignItems(tx, rD)
+	tx.Exec(`INSERT INTO deposit_transactions(rental_id, type, amount, note, created_by)
+		VALUES ($1,'hold',2850,'出库冻结押金',$2)`, rD, g7)
+	// 雪板：后检已发现板刃崩口 -> 维修工单 + 待游客确认的赔付通知（押金暂未扣减）
+	var skiRI2, skiItem2 int64
+	tx.QueryRow(`SELECT ri.id, ri.item_id FROM rental_items ri
+		WHERE ri.rental_id=$1 AND ri.equipment_type='ski'`, rD).Scan(&skiRI2, &skiItem2)
+	tx.Exec(`UPDATE equipment_items SET status='repair', current_rental_item_id=NULL WHERE id=$1`, skiItem2)
+	tx.Exec(`UPDATE rental_items SET status='repair' WHERE id=$1`, skiRI2)
+	var dmgID2, roID2 int64
+	tx.QueryRow(`INSERT INTO damage_reports
+		(rental_item_id, reporter_id, stage, damage_type, severity, description, photos,
+		 status, deduction, assessed_by)
+		VALUES ($1,$2,'post_inspection','edge_damage','medium','后检发现板刃有 2cm 崩口',
+		 '[]'::jsonb,'repair_created',525,$2) RETURNING id`, skiRI2, repairUID).Scan(&dmgID2)
+	tx.QueryRow(`INSERT INTO repair_orders(item_id, damage_id, issue, advice, status)
+		VALUES ($1,$2,'后检发现-板刃损伤：板刃崩口','磨刃/补刃，检测刃口平直度','queued') RETURNING id`,
+		skiItem2, dmgID2).Scan(&roID2)
+	tx.Exec(`UPDATE damage_reports SET repair_order_id=$1 WHERE id=$2`, roID2, dmgID2)
+	tx.Exec(`INSERT INTO damage_notifications(rental_id, damage_id, guest_id, amount, appeal_until)
+		VALUES ($1,$2,$3,525, now()+interval '47 hour')`, rD, dmgID2, g7)
+	// 护具：仍在待检区排队后检
+	var protRI, protItem int64
+	tx.QueryRow(`SELECT ri.id, ri.item_id FROM rental_items ri
+		WHERE ri.rental_id=$1 AND ri.equipment_type='protector'`, rD).Scan(&protRI, &protItem)
+	tx.Exec(`UPDATE equipment_items SET status='inspection' WHERE id=$1`, protItem)
+	tx.Exec(`UPDATE rental_items SET status='pending_inspection' WHERE id=$1`, protRI)
+	// 其余三件后检合格已上架
+	tx.Exec(`UPDATE rental_items SET status='returned_ok', returned_at=now()
+		WHERE rental_id=$1 AND equipment_type IN ('boot','helmet','pole')`, rD)
+	tx.Exec(`UPDATE equipment_items SET status='available', current_rental_item_id=NULL
+		WHERE id IN (SELECT item_id FROM rental_items
+			WHERE rental_id=$1 AND equipment_type IN ('boot','helmet','pole'))`, rD)
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}

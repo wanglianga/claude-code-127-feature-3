@@ -395,6 +395,7 @@ func (s *Server) teamMemberIDs(teamID int64) ([]int64, error) {
 
 func (s *Server) myRentals(w http.ResponseWriter, r *http.Request) {
 	c := currentUser(r)
+	s.releaseDueQuickSigns() // 申诉期已过的快签单先结算，游客看到最新押金状态
 	s.listJSON(w, `SELECT COALESCE(json_agg(t ORDER BY t.created_at DESC), '[]') FROM (
 		SELECT r.*, u.name AS guest_name, co.name AS course_name
 		FROM rentals r JOIN users u ON u.id=r.guest_id
@@ -406,6 +407,7 @@ func (s *Server) myRentals(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getRental(w http.ResponseWriter, r *http.Request) {
 	c := currentUser(r)
 	id := urlVar(r, "id")
+	s.releaseDueQuickSigns()
 	var owner int64
 	err := s.db.QueryRow(`SELECT guest_id FROM rentals WHERE id=$1`, id).Scan(&owner)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -473,7 +475,15 @@ SELECT row_to_json(x) FROM (
 		 WHERE ip.rental_id=r.id LIMIT 1) AS insurance_name,
 		(SELECT json_agg(json_build_object('id', sr.id, 'message', sr.message,
 			'created_at', to_char(sr.created_at,'MM-DD HH24:MI'), 'read', sr.read_at IS NOT NULL)
-		  ORDER BY sr.id DESC) FROM safety_reminders sr WHERE sr.rental_id=r.id) AS safety_reminders
+		  ORDER BY sr.id DESC) FROM safety_reminders sr WHERE sr.rental_id=r.id) AS safety_reminders,
+		(SELECT json_agg(json_build_object(
+			'id', dn.id, 'amount', dn.amount, 'status', dn.status,
+			'appeal_reason', dn.appeal_reason, 'review_note', dn.review_note,
+			'appeal_until', to_char(dn.appeal_until,'YYYY-MM-DD HH24:MI'),
+			'can_confirm', (dn.status='pending'),
+			'can_appeal', (dn.status='pending' AND dn.appeal_until > now()),
+			'damage_id', dn.damage_id
+		  ) ORDER BY dn.id) FROM damage_notifications dn WHERE dn.rental_id=r.id) AS notifications
 	FROM rentals r JOIN users u ON u.id=r.guest_id
 	LEFT JOIN courses co ON co.id=r.course_id
 	WHERE r.id=$1

@@ -79,10 +79,10 @@ const ROLE_LABEL = {
 }
 
 const NAV = {
-  guest: [['rentals', '我的租赁'], ['new', '新建租赁预约'], ['suggest', '尺码建议']],
-  counter: [['queue', '排队叫号大屏'], ['checkout', '扫码出库'], ['exchanges', '换码处理'], ['returns', '归还验损']],
+  guest: [['rentals', '我的租赁'], ['notifications', '后检赔付通知'], ['new', '新建租赁预约'], ['suggest', '尺码建议']],
+  counter: [['queue', '排队叫号大屏'], ['checkout', '扫码出库'], ['exchanges', '换码处理'], ['returns', '归还验损'], ['appeals', '后检申诉复核']],
   coach: [['courses', '我的课程与课前确认']],
-  repair: [['orders', '维修工单'], ['maintenance', '高损耗保养提醒']],
+  repair: [['orders', '维修工单'], ['inspections', '待检区·高峰后检'], ['maintenance', '高损耗保养提醒']],
   insurance: [['claims', '理赔处理'], ['policies', '保单查询']],
   finance: [['summary', '财务总览'], ['ledger', '押金流水台账']],
   admin: [['analytics', '运营分析'], ['trace', '雪具全程追踪'], ['catalog', '雪具型号/入库']]

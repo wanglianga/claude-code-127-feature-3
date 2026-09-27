@@ -1,15 +1,96 @@
 import React, { useEffect, useState } from 'react'
-import { api, yuan, TYPE_LABEL } from '../api.js'
+import { api, yuan, TYPE_LABEL, NOTIF_STATUS } from '../api.js'
 import { Badge, Field, Loading, Empty, useToast } from '../components/ui.jsx'
 import RentalDetail, { statusBadge } from '../components/RentalDetail.jsx'
 
 export default function GuestPage({ page, go }) {
   if (page === 'new') return <NewRental onCreated={() => go('rentals')} />
   if (page === 'suggest') return <Suggest />
-  return <MyRentals />
+  if (page === 'notifications') return <Notifications go={go} />
+  return <MyRentals go={go} />
 }
 
-function MyRentals() {
+// ---------- 后检赔付通知（快速签收后） ----------
+function Notifications({ go }) {
+  const [list, setList] = useState(null)
+  const toast = useToast()
+  const load = async () => setList(await api('GET', '/guest/notifications'))
+  useEffect(() => { load().catch(() => {}) }, [])
+  const confirmOne = async (n) => {
+    try {
+      const d = await api('POST', `/guest/notifications/${n.id}/confirm`, {})
+      toast(d.message); load()
+    } catch (e) { toast(e.message, 'error') }
+  }
+  const appeal = async (n, reason) => {
+    try {
+      const d = await api('POST', `/guest/notifications/${n.id}/appeal`, { reason })
+      toast(d.message); load()
+    } catch (e) { toast(e.message, 'error') }
+  }
+  if (!list) return <Loading />
+  return (
+    <div>
+      <h2 style={{ margin: 0, fontSize: 18 }}>后检赔付通知（快速签收）</h2>
+      <p className="muted small">赶班车走快速签收通道后，雪具由维修间后检。若发现损坏，赔付通知会发到这里：
+        你可以<b>确认扣减</b>，或在申诉期内<b>发起申诉</b>；申诉期结束未处理视为确认，押金随后释放。</p>
+      {list.length === 0 && <Empty text="暂无后检赔付通知" />}
+      <div className="grid grid-2">
+        {list.map(n => <NotificationCard key={n.id} n={n} onConfirm={confirmOne} onAppeal={appeal} go={go} />)}
+      </div>
+    </div>
+  )
+}
+
+function NotificationCard({ n, onConfirm, onAppeal, go }) {
+  const [appealing, setAppealing] = useState(false)
+  const [reason, setReason] = useState('')
+  const color = n.status === 'pending' ? 'orange' : n.status === 'appealed' ? 'purple'
+    : n.status === 'confirmed' ? 'red' : 'green'
+  return (
+    <div className="card">
+      <div className="btn-row">
+        <b>{n.rental_code} · {n.item_label}</b>
+        <span className="spacer" style={{ flex: 1 }} />
+        <Badge color={color}>{NOTIF_STATUS[n.status] || n.status}</Badge>
+      </div>
+      <div className="alert red small" style={{ marginTop: 8 }}>
+        后检发现：{n.type_label}（{n.severity === 'light' ? '轻微' : n.severity === 'heavy' ? '严重' : '中等'}）
+        · 拟扣减押金 <b>{yuan(n.amount)}</b>
+        <div>{n.description}</div>
+        {n.photos?.length > 0 && <div className="photos">{n.photos.map((p, i) => <img key={i} src={p} alt="" />)}</div>}
+      </div>
+      <div className="small muted" style={{ marginTop: 6 }}>通知时间 {n.notified_at} · 申诉截止 {n.appeal_until}</div>
+      {n.status === 'pending' && <div className="btn-row" style={{ marginTop: 8 }}>
+        <button className="btn" onClick={() => onConfirm(n)}>确认扣减并释放押金</button>
+        {n.can_appeal ? <button className="btn warn" onClick={() => setAppealing(v => !v)}>发起申诉</button>
+          : <Badge color="gray">申诉期已过</Badge>}
+      </div>}
+      {appealing && <div style={{ marginTop: 8 }}>
+        <Field label="申诉理由（如：归还时完好、损坏非本人使用造成等）">
+          <textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} />
+        </Field>
+        <div className="btn-row">
+          <button className="btn ghost" onClick={() => setAppealing(false)}>取消</button>
+          <button className="btn warn" disabled={!reason.trim()}
+            onClick={() => onAppeal(n, reason.trim())}>提交申诉（押金继续冻结待复核）</button>
+        </div>
+      </div>}
+      {n.status === 'appealed' && <div className="alert warn small" style={{ marginTop: 8 }}>
+        <b>已申诉：</b>{n.appeal_reason}<div>柜台复核中，复核结果将更新在此处。</div>
+      </div>}
+      {n.status === 'cancelled' && <div className="alert info small" style={{ marginTop: 8 }}>
+        申诉成立，该笔扣减已取消。{n.review_note && <div>复核说明：{n.review_note}</div>}
+      </div>}
+      {n.status === 'confirmed' && n.review_note && <div className="small muted" style={{ marginTop: 6 }}>复核说明：{n.review_note}</div>}
+      <div className="modal-foot" style={{ paddingRight: 0 }}>
+        <button className="btn sm ghost" onClick={() => go('rentals')}>查看租赁单与押金流水</button>
+      </div>
+    </div>
+  )
+}
+
+function MyRentals({ go }) {
   const [list, setList] = useState(null)
   const [openId, setOpenId] = useState(null)
   const load = async () => setList(await api('GET', '/rentals/mine'))

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
-import { api, yuan, TYPE_LABEL, DAMAGE_TYPES, uploadPhoto } from '../api.js'
+import { api, yuan, TYPE_LABEL, DAMAGE_TYPES, NOTIF_STATUS, uploadPhoto } from '../api.js'
 import { Badge, Modal, Field, Loading, Empty, useToast } from '../components/ui.jsx'
 import RentalDetail from '../components/RentalDetail.jsx'
 
@@ -7,7 +7,8 @@ export default function CounterPage({ page, go }) {
   if (page === 'checkout') return <Checkout />
   if (page === 'exchanges') return <Exchanges />
   if (page === 'returns') return <Returns />
-  return <QueueBoard />
+  if (page === 'appeals') return <Appeals go={go} />
+  return <QueueBoard go={go} />
 }
 
 const QMETA = [
@@ -15,7 +16,34 @@ const QMETA = [
   ['return_day', '日场归还', 'D'], ['return_night', '夜场归还', 'N'], ['damage', '损坏处理', 'M']
 ]
 
-function QueueBoard() {
+// 高峰容量条：归还队列之外，同步展示待检雪具与维修间容量
+function CapacityBar({ summary, go }) {
+  const inspectPct = Math.min(100, Math.round(100 * (summary.inspection_pending || 0) / Math.max(1, summary.inspect_capacity || 1)))
+  const repairPct = Math.min(100, Math.round(100 * (summary.repair_active || 0) / Math.max(1, summary.repair_capacity || 1)))
+  const full = (pct) => pct >= 90
+  return (
+    <div className="capacity-bar">
+      <div className={'cap-item' + (full(inspectPct) ? ' cap-full' : '')}>
+        <span className="cap-k">🔍 待检雪具</span>
+        <b>{summary.inspection_pending ?? 0}/{summary.inspect_capacity ?? '-'}</b>
+        <div className="cap-track"><div className="cap-fill" style={{ width: inspectPct + '%' }} /></div>
+      </div>
+      <div className={'cap-item' + (full(repairPct) ? ' cap-full' : '')}>
+        <span className="cap-k">🔧 维修工位</span>
+        <b>{summary.repair_active ?? 0}/{summary.repair_capacity ?? '-'}</b>
+        <div className="cap-track"><div className="cap-fill" style={{ width: repairPct + '%' }} /></div>
+      </div>
+      <div className="cap-item">
+        <span className="cap-k">⚡ 快签待后检</span><b>{summary.quick_sign_open ?? 0}</b><span className="small muted">单</span>
+      </div>
+      <button className="btn sm warn" onClick={() => go('appeals')}>
+        📨 申诉复核{(summary.appeal_open ?? 0) > 0 ? `（${summary.appeal_open}）` : ''}
+      </button>
+    </div>
+  )
+}
+
+function QueueBoard({ go }) {
   const [tickets, setTickets] = useState(null)
   const [summary, setSummary] = useState({})
   const [detail, setDetail] = useState(null)
@@ -41,8 +69,9 @@ function QueueBoard() {
       <div className="btn-row" style={{ marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 18 }}>柜台排队叫号大屏</h2>
         <span className="spacer" style={{ flex: 1 }} />
-        <span className="small muted">每 5 秒自动刷新 · 日场/夜场归还分开排队</span>
+        <span className="small muted">每 5 秒自动刷新 · 日场/夜场归还分开排队 · 高峰可快速签收</span>
       </div>
+      <CapacityBar summary={summary} go={go} />
       <div className="queue-board">
         {QMETA.map(([type, label]) => {
           const list = tickets.filter(t => t.queue_type === type)
@@ -283,6 +312,7 @@ function ReturnInspect({ rental, onBack, onChanged }) {
   const [form, setForm] = useState({ result: 'ok', damage_type: 'edge_damage', severity: 'medium', description: '', photos: [] })
   const [settling, setSettling] = useState(false)
   const [result, setResult] = useState(null)
+  const [quick, setQuick] = useState(null)
   const pending = rental.items.filter(i => i.status === 'out')
 
   const submitItem = async () => {
@@ -300,6 +330,16 @@ function ReturnInspect({ rental, onBack, onChanged }) {
       const d = await api('POST', `/counter/returns/${rental.id}/finish`, {})
       setResult(d); onChanged()
     } catch (e) { toast(e.message, 'error') } finally { setSettling(false) }
+  }
+  const quickSign = async () => {
+    try {
+      const d = await api('POST', `/counter/returns/${rental.id}/quick-sign`, {
+        appeal_hours: Number(quick.hours) || 48,
+        contact_phone: quick.phone || undefined
+      })
+      toast(d.message)
+      setQuick(null); onChanged(); onBack()
+    } catch (e) { toast(e.message, 'error') }
   }
   const onFile = async (f) => {
     try { const url = await uploadPhoto(f); setForm(s => ({ ...s, photos: [...s.photos, url] })); toast('照片已上传') }
@@ -350,10 +390,32 @@ function ReturnInspect({ rental, onBack, onChanged }) {
       {!result && <div className="modal-foot">
         <span className="small muted">待验雪具 {pending.length} 件</span>
         <span className="spacer" style={{ flex: 1 }} />
+        <button className="btn warn" onClick={() => setQuick({ hours: 48, phone: '' })}>
+          ⚡ 赶班车？快速签收（免逐件验损）
+        </button>
         <button className="btn" disabled={pending.length > 0 || settling} onClick={finish}>
           {pending.length > 0 ? `还有 ${pending.length} 件未验` : '完成归还并结算押金'}
         </button>
       </div>}
+
+      {quick && <Modal title="快速签收（高峰归还通道）" onClose={() => setQuick(null)}>
+        <div className="alert warn small">
+          快速签收后 {pending.length} 件雪具整体转入<b>维修间待检区</b>，游客可先离场赶班车；
+          押金<b>暂不退还</b>，后检发现损坏将向游客发送赔付通知，游客确认或申诉期（默认 48 小时）结束后才释放押金。
+        </div>
+        <Field label="游客联系方式（接收赔付通知与申诉链接，默认注册手机号）">
+          <input value={quick.phone} onChange={e => setQuick({ ...quick, phone: e.target.value })}
+            placeholder={rental.guest_phone} />
+        </Field>
+        <Field label="申诉期限（小时，默认 48，最多 168）">
+          <input type="number" min="1" max="168" value={quick.hours}
+            onChange={e => setQuick({ ...quick, hours: e.target.value })} />
+        </Field>
+        <div className="modal-foot">
+          <button className="btn ghost" onClick={() => setQuick(null)}>取消</button>
+          <button className="btn warn" onClick={quickSign}>确认快速签收并留存联系方式</button>
+        </div>
+      </Modal>}
 
       {target && <Modal title="单件验损登记" onClose={() => setTarget(null)}>
         <Field label="验具结果">
@@ -388,6 +450,69 @@ function ReturnInspect({ rental, onBack, onChanged }) {
           <button className={form.result === 'ok' ? 'btn' : 'btn danger'} onClick={submitItem}>确认验具结果</button>
         </div>
       </Modal>}
+    </div>
+  )
+}
+
+// ---------- 后检赔付通知申诉复核 ----------
+function Appeals({ go }) {
+  const [list, setList] = useState(null)
+  const toast = useToast()
+  const load = useCallback(async () => setList(await api('GET', '/counter/appeals')), [])
+  useEffect(() => { load() }, [])
+  const review = async (id, approve, note) => {
+    try {
+      const d = await api('POST', `/counter/appeals/${id}/review`, { approve, note })
+      toast(d.message); load()
+    } catch (e) { toast(e.message, 'error') }
+  }
+  return (
+    <div>
+      <div className="btn-row">
+        <h2 style={{ margin: 0, fontSize: 18 }}>后检赔付通知 · 申诉复核</h2>
+        <span className="spacer" style={{ flex: 1 }} />
+        <button className="btn sm ghost" onClick={() => go('queue')}>← 返回大屏</button>
+      </div>
+      <p className="muted small">快速签收后维修间后检发现损坏时先向游客发通知，游客确认或申诉期结束后才扣减释放押金；
+        游客发起申诉的单据在此复核，复核期间押金保持冻结。</p>
+      {!list ? <Loading /> : list.length === 0 ? <Empty text="暂无申诉，也没有近 2 天已复核记录" /> : (
+        <div className="grid grid-2">
+          {list.map(n => <AppealCard key={n.id} n={n} onReview={review} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AppealCard({ n, onReview }) {
+  const [note, setNote] = useState('')
+  const color = n.status === 'appealed' ? 'orange' : n.status === 'cancelled' ? 'green' : 'gray'
+  return (
+    <div className="card">
+      <div className="btn-row">
+        <b>{n.rental_code} · {n.guest_name}</b>
+        <span className="spacer" style={{ flex: 1 }} />
+        <Badge color={color}>{NOTIF_STATUS[n.status] || n.status}</Badge>
+      </div>
+      <div className="small muted">{n.guest_phone} · 通知 {n.notified_at} · 申诉截止 {n.appeal_until}</div>
+      <div className="alert red small" style={{ marginTop: 8 }}>
+        {n.item_label}：{n.type_label}（{n.severity === 'light' ? '轻微' : n.severity === 'heavy' ? '严重' : '中等'}）
+        · 拟扣 <b>{yuan(n.amount)}</b>
+        <div>{n.description}</div>
+        {n.photos?.length > 0 && <div className="photos">{n.photos.map((p, i) => <img key={i} src={p} alt="" />)}</div>}
+      </div>
+      {n.status === 'appealed' && <>
+        <div className="alert warn small" style={{ marginTop: 8 }}>
+          <b>游客申诉理由：</b>{n.appeal_reason}
+        </div>
+        <Field label="复核说明"><input value={note} onChange={e => setNote(e.target.value)}
+          placeholder="核对后检照片/工单后的结论" /></Field>
+        <div className="btn-row">
+          <button className="btn" onClick={() => onReview(n.id, true, note)}>申诉成立，取消扣减</button>
+          <button className="btn danger" onClick={() => onReview(n.id, false, note || '复核后维持原认定')}>驳回申诉，维持扣减</button>
+        </div>
+      </>}
+      {n.status !== 'appealed' && n.review_note && <div className="small muted">复核说明：{n.review_note}</div>}
     </div>
   )
 }
