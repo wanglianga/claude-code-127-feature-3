@@ -473,7 +473,19 @@ SELECT row_to_json(x) FROM (
 		 WHERE ip.rental_id=r.id LIMIT 1) AS insurance_name,
 		(SELECT json_agg(json_build_object('id', sr.id, 'message', sr.message,
 			'created_at', to_char(sr.created_at,'MM-DD HH24:MI'), 'read', sr.read_at IS NOT NULL)
-		  ORDER BY sr.id DESC) FROM safety_reminders sr WHERE sr.rental_id=r.id) AS safety_reminders
+		  ORDER BY sr.id DESC) FROM safety_reminders sr WHERE sr.rental_id=r.id) AS safety_reminders,
+		(SELECT row_to_json(q) FROM (
+			SELECT qs.id, qs.status, qs.contact_phone, qs.shuttle_note,
+			       to_char(qs.appeal_deadline,'YYYY-MM-DD HH24:MI') AS appeal_deadline,
+			       to_char(qs.created_at,'MM-DD HH24:MI') AS signed_at,
+			       to_char(qs.inspected_at,'MM-DD HH24:MI') AS inspected_at
+			FROM quick_signoffs qs WHERE qs.rental_id=r.id ORDER BY qs.id DESC LIMIT 1) q) AS quick_signoff,
+		(SELECT json_agg(json_build_object(
+			'id', dn.id, 'amount', dn.amount, 'status', dn.status, 'resolution', dn.resolution,
+			'appeal_text', dn.appeal_text, 'resolution_note', dn.resolution_note,
+			'appeal_deadline', to_char(dn.appeal_deadline,'YYYY-MM-DD HH24:MI'),
+			'damage_id', dn.damage_id
+		  ) ORDER BY dn.id) FROM damage_notifications dn WHERE dn.rental_id=r.id) AS notifications
 	FROM rentals r JOIN users u ON u.id=r.guest_id
 	LEFT JOIN courses co ON co.id=r.course_id
 	WHERE r.id=$1

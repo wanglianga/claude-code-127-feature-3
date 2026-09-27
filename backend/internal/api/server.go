@@ -24,6 +24,7 @@ func NewServer(database *sql.DB, cfg config.Config) *Server {
 	s := &Server{db: database, cfg: cfg}
 	os.MkdirAll(cfg.UploadDir, 0o755)
 	s.registerRoutes()
+	go s.sweepLoop() // 申诉期届满的通知自动转为默认确认并结算释放押金
 	return s
 }
 

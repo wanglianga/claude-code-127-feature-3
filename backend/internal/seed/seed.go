@@ -61,7 +61,7 @@ func Run(d *sql.DB) error {
 	// 员工
 	mkUser("13800000001", "赵店长", "admin")
 	coachID := mkUser("13800000002", "陈教练", "coach")
-	mkUser("13800000003", "孙柜台", "counter")
+	counterID := mkUser("13800000003", "孙柜台", "counter")
 	mkUser("13800000004", "周师傅", "repair")
 	mkUser("13800000005", "吴理赔", "insurance")
 	mkUser("13800000006", "郑财务", "finance")
@@ -70,7 +70,7 @@ func Run(d *sql.DB) error {
 	g2 := mkUser("13900000002", "李华（进阶）", "guest", 178, 75, 43.5, 59, "intermediate")
 	g3 := mkUser("13900000003", "王芳（夜场初学者）", "guest", 162, 52, 38.0, 55, "beginner")
 	g4 := mkUser("13900000004", "刘团队-队长", "guest", 180, 88, 45.0, 60, "advanced")
-	mkUser("13900000005", "团队成员-小钱", "guest", 155, 48, 37.0, 54, "beginner")
+	g5 := mkUser("13900000005", "团队成员-小钱", "guest", 155, 48, 37.0, 54, "beginner")
 	mkUser("13900000006", "团队成员-小孙", "guest", 168, 60, 40.0, 56, "beginner")
 
 	// 团队
@@ -284,6 +284,30 @@ func Run(d *sql.DB) error {
 		WHERE id IN (SELECT item_id FROM rental_items WHERE rental_id=$1 AND equipment_type<>'ski')`, rC)
 	tx.Exec(`INSERT INTO queue_tickets(rental_id, queue_type, ticket_no)
 		VALUES ($1,'return_night','N001')`, rC)
+
+	// ---------- 示例订单 D：高峰快速签收待后检（维修间后检列表开箱即有数据） ----------
+	var rD int64
+	tx.QueryRow(`INSERT INTO rentals
+		(code, guest_id, course_id, ticket_no, session_type, status,
+		 deposit_total, fee_total, pickup_at, return_due_at)
+		VALUES ('R-DEMO-D',$1,$2,'T20260104','day','quick_signed',
+		 (1500+500+300),(300+100+60), now()-interval '6 hour', now()+interval '2 hour')
+		RETURNING id`, g5, dayCourse).Scan(&rD)
+	addLines(tx, rD, []lineSpec{
+		{"ski", "SKI135", "135cm", 300, 1500},
+		{"boot", "BOOT37", "EU37", 100, 500},
+		{"helmet", "HELMS", "S", 60, 300},
+	}, "pending_inspection")
+	assignItems(tx, rD) // 分配实物（assignItems 按 out 处理，下面统一改回待后检）
+	tx.Exec(`UPDATE equipment_items SET status='inspection', current_rental_item_id=NULL
+		WHERE id IN (SELECT item_id FROM rental_items WHERE rental_id=$1)`, rD)
+	tx.Exec(`UPDATE rental_items SET status='pending_inspection' WHERE rental_id=$1`, rD)
+	tx.Exec(`INSERT INTO deposit_transactions(rental_id, type, amount, note, created_by)
+		VALUES ($1,'hold',2300,'出库冻结押金',$2)`, rD, g5)
+	tx.Exec(`INSERT INTO quick_signoffs
+		(rental_id, signed_by, contact_phone, shuttle_note, appeal_deadline)
+		VALUES ($1,$2,'13900000005','游客赶 17:30 班车，柜台先签收，雪具转维修间后检', now()+interval '48 hour')`,
+		rD, counterID)
 
 	if err := tx.Commit(); err != nil {
 		return err

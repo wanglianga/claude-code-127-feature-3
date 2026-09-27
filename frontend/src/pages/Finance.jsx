@@ -15,6 +15,8 @@ function Summary() {
     ['日/夜场租金收入（已归还单）', s.rental_fee_income, 'green'],
     ['保险费收入', s.premium_income, 'green'],
     ['在租冻结押金', s.deposit_held_open, 'blue'],
+    ['快速签收暂扣押金', s.quick_sign_hold, 'cyan'],
+    ['待游客确认赔付', s.notify_pending_amount, 'orange'],
     ['损坏扣减累计', s.damage_deducted, 'orange'],
     ['丢失扣减累计', s.lost_deducted, 'red'],
     ['超时扣减累计', s.late_deducted],
@@ -25,7 +27,8 @@ function Summary() {
   return (
     <div>
       <h2 style={{ fontSize: 18 }}>财务总览</h2>
-      <p className="muted small">押金「冻结 → 扣减/保险冲抵 → 退还」全流程留痕，进行中租赁单 {s.open_rentals} 单。</p>
+      <p className="muted small">押金「冻结 → 扣减/保险冲抵 → 退还」全流程留痕，进行中租赁单 {s.open_rentals} 单；
+        快速签收待后检 {s.quick_sign_pending} 单（押金暂扣至申诉期结束），赔付通知申诉中 {s.appealing_count} 条。</p>
       <div className="grid grid-3">
         {cards.map(([k, v, color]) => (
           <div className="stat" key={k}>

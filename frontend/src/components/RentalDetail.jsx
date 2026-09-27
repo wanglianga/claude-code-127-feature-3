@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { api, yuan, TYPE_LABEL, RENTAL_STATUS, ITEM_STATUS, DAMAGE_TYPES, uploadPhoto } from '../api.js'
+import { api, yuan, TYPE_LABEL, RENTAL_STATUS, ITEM_STATUS, DAMAGE_TYPES, NOTIFY_STATUS, uploadPhoto } from '../api.js'
 import { Badge, Modal, Field, useToast, Empty, Loading } from './ui.jsx'
 
 function statusBadge(s) {
@@ -52,6 +52,47 @@ export default function RentalDetail({ id, onClose, onChanged, asGuest, canAsses
         </div>
       )}
 
+      {/* 快速签收信息 */}
+      {r.quick_signoff && (
+        <div className="alert info">
+          <b>⚡ 高峰快速签收：</b>游客赶班车先行离开，雪具转维修间后检。
+          <div className="small" style={{ marginTop: 4 }}>
+            签收 {r.quick_signoff.signed_at} · 联系方式 <span className="mono">{r.quick_signoff.contact_phone}</span>
+            {r.quick_signoff.shuttle_note && ` · ${r.quick_signoff.shuttle_note}`}
+          </div>
+          <div className="small">
+            申诉期至 <b>{r.quick_signoff.appeal_deadline}</b> ·
+            状态：{{ pending_inspection: '待维修间后检', inspected: '后检完成待确认/结算', settled: '已结算' }[r.quick_signoff.status]}
+            {r.status === 'quick_signed' && ' · 押金冻结中，后检与申诉期结束后释放'}
+          </div>
+        </div>
+      )}
+
+      {/* 赔付通知（后检损坏 → 游客确认/申诉） */}
+      {r.notifications?.length > 0 && (
+        <>
+          <h4>后检赔付通知</h4>
+          {r.notifications.map(n => (
+            <div key={n.id} className={n.status === 'pending' || n.status === 'appealed' ? 'alert warn' : 'alert info'}>
+              <div className="btn-row" style={{ justifyContent: 'space-between' }}>
+                <b>拟扣减押金 {yuan(n.amount)}</b>
+                <Badge color={(NOTIFY_STATUS[n.status] || [, 'gray'])[1]}>{NOTIFY_STATUS[n.status]?.[0] || n.status}</Badge>
+              </div>
+              <div className="small">申诉期至 {n.appeal_deadline}
+                {n.resolution && ` · 复核结果：${n.resolution === 'upheld' ? '维持扣减' : '申诉成立，取消扣减'}`}
+                {n.resolution_note && `（${n.resolution_note}）`}</div>
+              {n.appeal_text && <div className="small">我的申诉：{n.appeal_text}</div>}
+              {asGuest && n.status === 'pending' && (
+                <div className="btn-row" style={{ marginTop: 6 }}>
+                  <button className="btn sm" onClick={() => act('POST', `/guest/notifications/${n.id}/confirm`, {})}>✅ 确认赔付</button>
+                  <AppealBtn notification={n} onDone={load} />
+                </div>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+
       <h4>雪具清单与建议依据</h4>
       <div className="table-wrap">
         <table>
@@ -92,6 +133,7 @@ export default function RentalDetail({ id, onClose, onChanged, asGuest, canAsses
               </>
             )}
             {r.status === 'return_pending' && <Badge color="orange">已在归还队列，请等待柜台叫号验具</Badge>}
+            {r.status === 'quick_signed' && <Badge color="cyan">已快速签收，维修间后检中，押金冻结至申诉期结束</Badge>}
             {r.status === 'returned' && !r.feedback && <FeedbackBtn rental={r} onDone={load} />}
             {r.status === 'returned' && r.feedback && <Badge color="green">已评价 {r.feedback.rating} 星</Badge>}
           </div>
@@ -326,6 +368,30 @@ function AssessButton({ damage, onDone }) {
       <p className="small muted">评定后系统按押金比例计算扣减、自动开维修工单；若有保险将自动立案，旧雪具收回并自动换发同型号。</p>
       <div className="modal-foot"><button className="btn ghost" onClick={() => setOpen(false)}>取消</button>
         <button className="btn warn" onClick={submit}>确认评定</button></div>
+    </Modal>}
+  </>
+}
+
+function AppealBtn({ notification, onDone }) {
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState('')
+  const toast = useToast()
+  const submit = async () => {
+    try {
+      const d = await api('POST', `/guest/notifications/${notification.id}/appeal`, { reason })
+      toast(d.message); setOpen(false); onDone()
+    } catch (e) { toast(e.message, 'error') }
+  }
+  return <>
+    <button className="btn sm danger" onClick={() => setOpen(true)}>✊ 我要申诉</button>
+    {open && <Modal title="赔付申诉" onClose={() => setOpen(false)}>
+      <div className="alert warn small">拟扣减 <b>{yuan(notification.amount)}</b> · 申诉期至 {notification.appeal_deadline}。
+        申诉期间押金继续冻结，柜台复核后将给出结论。</div>
+      <Field label="申诉理由（如：取具时已有损伤、非本人使用造成）">
+        <textarea rows={3} value={reason} onChange={e => setReason(e.target.value)} placeholder="请说明情况…" />
+      </Field>
+      <div className="modal-foot"><button className="btn ghost" onClick={() => setOpen(false)}>取消</button>
+        <button className="btn danger" disabled={!reason.trim()} onClick={submit}>提交申诉</button></div>
     </Modal>}
   </>
 }

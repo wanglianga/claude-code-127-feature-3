@@ -599,6 +599,278 @@ func TestTeamOrderAndPickupQueue(t *testing.T) {
 	}
 }
 
+// 高峰快速签收全流程：柜台快速签收（保留联系方式+申诉期限）→ 维修间后检 →
+// 赔付通知（不能跳过游客确认）→ 游客确认/申诉 → 申诉处理后结算释放押金
+func TestQuickSignoffFlow(t *testing.T) {
+	g := login(t, "13900000006") // 团队成员-小孙 168/60/40 beginner
+	counter := login(t, "13800000003")
+	repair := login(t, "13800000004")
+	fin := login(t, "13800000006")
+
+	mkRental := func() int64 {
+		var slots []struct {
+			ID        int64 `json:"id"`
+			Remaining int   `json:"remaining"`
+		}
+		req(t, "GET", "/slots?session=day", g, nil, &slots)
+		var slotID int64
+		for _, s := range slots {
+			if s.Remaining >= 1 {
+				slotID = s.ID
+				break
+			}
+		}
+		var created struct {
+			Rentals []struct {
+				RentalID int64 `json:"rental_id"`
+			} `json:"rentals"`
+		}
+		code, e := req(t, "POST", "/rentals", g, map[string]interface{}{
+			"session_type": "day", "slot_id": slotID,
+			"include": map[string]bool{"protector": true},
+		}, &created)
+		mustOK(t, code, e["error"])
+		rid := created.Rentals[0].RentalID
+		req(t, "POST", fmt.Sprintf("/rentals/%d/confirm", rid), g, map[string]string{}, nil)
+		req(t, "POST", "/counter/checkout", counter, map[string]interface{}{"rental_id": rid}, nil)
+		code, e = req(t, "POST", fmt.Sprintf("/rentals/%d/queue-return", rid), g,
+			map[string]interface{}{"night": false}, nil)
+		mustOK(t, code, e["error"])
+		return rid
+	}
+
+	// 高峰看板：归还队列 / 待检雪具 / 维修间容量
+	var board struct {
+		ReturnDayWaiting       int `json:"return_day_waiting"`
+		PendingInspectionItems int `json:"pending_inspection_items"`
+		RepairActive           int `json:"repair_active"`
+		RepairCapacity         int `json:"repair_capacity"`
+	}
+	code, e := req(t, "GET", "/peak-board", counter, nil, &board)
+	mustOK(t, code, e["error"])
+	if board.RepairCapacity != 8 {
+		t.Fatalf("维修间容量应为 8，实际 %d", board.RepairCapacity)
+	}
+
+	// ---------- 单 A：游客确认路径 ----------
+	ridA := mkRental()
+	var qs struct {
+		QuickSignoffID int64  `json:"quick_signoff_id"`
+		ContactPhone   string `json:"contact_phone"`
+		AppealDeadline string `json:"appeal_deadline"`
+	}
+	code, e = req(t, "POST", fmt.Sprintf("/counter/returns/%d/quick-signoff", ridA), counter,
+		map[string]interface{}{"shuttle_note": "赶 17:30 班车"}, &qs)
+	mustOK(t, code, e["error"])
+	if qs.ContactPhone != "13900000006" || qs.AppealDeadline == "" {
+		t.Fatalf("快速签收应保留联系方式与申诉期限: %+v", qs)
+	}
+	// 租赁单进入 quick_signed，押金仍冻结
+	var fin1 struct {
+		QuickSignHold float64 `json:"quick_sign_hold"`
+	}
+	req(t, "GET", "/finance/summary", fin, nil, &fin1)
+	if fin1.QuickSignHold <= 0 {
+		t.Fatal("快速签收后财务端应显示暂扣押金")
+	}
+	// 后检完成前不能结算
+	code, _ = req(t, "POST", fmt.Sprintf("/counter/quick-signoffs/%d/settle", qs.QuickSignoffID), counter, nil, nil)
+	if code != http.StatusConflict {
+		t.Fatalf("后检未完成时结算应 409，实际 %d", code)
+	}
+
+	// 维修间后检：雪板板刃损伤（medium），其余完好
+	var qsList []struct {
+		ID    int64 `json:"id"`
+		Items []struct {
+			ID            int64  `json:"id"`
+			EquipmentType string `json:"equipment_type"`
+			Status        string `json:"status"`
+		} `json:"items"`
+	}
+	req(t, "GET", "/repair/post-inspections", repair, nil, &qsList)
+	var target *struct {
+		ID    int64 `json:"id"`
+		Items []struct {
+			ID            int64  `json:"id"`
+			EquipmentType string `json:"equipment_type"`
+			Status        string `json:"status"`
+		} `json:"items"`
+	}
+	for i := range qsList {
+		if qsList[i].ID == qs.QuickSignoffID {
+			target = &qsList[i]
+		}
+	}
+	if target == nil {
+		t.Fatal("维修间后检列表应包含该快速签收单")
+	}
+	for _, it := range target.Items {
+		body := map[string]interface{}{"rental_item_id": it.ID, "result": "ok"}
+		if it.EquipmentType == "ski" {
+			body = map[string]interface{}{"rental_item_id": it.ID, "result": "damaged",
+				"damage_type": "edge_damage", "severity": "medium", "description": "后检发现板刃缺口"}
+		}
+		code, e = req(t, "POST", fmt.Sprintf("/repair/post-inspections/%d/inspect", qs.QuickSignoffID), repair, body, nil)
+		mustOK(t, code, e["error"])
+	}
+	var comp struct {
+		Notifications int  `json:"notifications"`
+		Settled       bool `json:"settled"`
+	}
+	code, e = req(t, "POST", fmt.Sprintf("/repair/post-inspections/%d/complete", qs.QuickSignoffID), repair, nil, &comp)
+	mustOK(t, code, e["error"])
+	if comp.Notifications != 1 || comp.Settled {
+		t.Fatalf("应生成 1 条赔付通知且不结算: %+v", comp)
+	}
+
+	// 通知 pending 时手动结算必须被拒绝（赔付通知不能跳过游客确认）
+	code, _ = req(t, "POST", fmt.Sprintf("/counter/quick-signoffs/%d/settle", qs.QuickSignoffID), counter, nil, nil)
+	if code != http.StatusConflict {
+		t.Fatalf("游客确认前结算应 409，实际 %d", code)
+	}
+
+	// 游客看到通知并确认 -> 自动结算
+	var notes []struct {
+		ID     int64   `json:"id"`
+		Amount float64 `json:"amount"`
+		Status string  `json:"status"`
+	}
+	req(t, "GET", "/guest/notifications", g, nil, &notes)
+	var noteID int64
+	for _, n := range notes {
+		if n.Status == "pending" {
+			noteID = n.ID
+			// 雪板押金 1500，板刃 35% = 525
+			if n.Amount != 525 {
+				t.Fatalf("通知金额应为 525，实际 %.2f", n.Amount)
+			}
+		}
+	}
+	if noteID == 0 {
+		t.Fatal("游客应看到待确认赔付通知")
+	}
+	var conf struct {
+		Settled bool `json:"settled"`
+	}
+	code, e = req(t, "POST", fmt.Sprintf("/guest/notifications/%d/confirm", noteID), g, nil, &conf)
+	mustOK(t, code, e["error"])
+	if !conf.Settled {
+		t.Fatal("全部通知确认后应自动结算")
+	}
+	var rdA struct {
+		Status      string `json:"status"`
+		DepositLogs []struct {
+			Type   string  `json:"type"`
+			Amount float64 `json:"amount"`
+		} `json:"deposit_logs"`
+	}
+	req(t, "GET", fmt.Sprintf("/rentals/%d", ridA), g, nil, &rdA)
+	if rdA.Status != "returned" {
+		t.Fatalf("结算后租赁单应 returned，实际 %s", rdA.Status)
+	}
+	var deduct, refund float64
+	for _, l := range rdA.DepositLogs {
+		if l.Type == "deduct_damage" {
+			deduct += l.Amount
+		}
+		if l.Type == "refund" {
+			refund = l.Amount
+		}
+	}
+	if deduct != 525 {
+		t.Fatalf("扣减应为 525，实际 %.2f", deduct)
+	}
+	var detailA struct {
+		DepositTotal float64 `json:"deposit_total"`
+	}
+	req(t, "GET", fmt.Sprintf("/rentals/%d", ridA), g, nil, &detailA)
+	if refund != detailA.DepositTotal-525 {
+		t.Fatalf("退还应为押金-525=%.2f，实际 %.2f", detailA.DepositTotal-525, refund)
+	}
+
+	// ---------- 单 B：申诉路径（申诉成立取消扣减） ----------
+	ridB := mkRental()
+	var qsB struct {
+		QuickSignoffID int64 `json:"quick_signoff_id"`
+	}
+	code, e = req(t, "POST", fmt.Sprintf("/counter/returns/%d/quick-signoff", ridB), counter,
+		map[string]interface{}{}, &qsB)
+	mustOK(t, code, e["error"])
+	req(t, "GET", "/repair/post-inspections", repair, nil, &qsList)
+	target = nil
+	for i := range qsList {
+		if qsList[i].ID == qsB.QuickSignoffID {
+			target = &qsList[i]
+		}
+	}
+	for _, it := range target.Items {
+		body := map[string]interface{}{"rental_item_id": it.ID, "result": "ok"}
+		if it.EquipmentType == "helmet" {
+			body = map[string]interface{}{"rental_item_id": it.ID, "result": "damaged",
+				"damage_type": "strap_broken", "severity": "medium", "description": "绑带断裂"}
+		}
+		code, e = req(t, "POST", fmt.Sprintf("/repair/post-inspections/%d/inspect", qsB.QuickSignoffID), repair, body, nil)
+		mustOK(t, code, e["error"])
+	}
+	code, e = req(t, "POST", fmt.Sprintf("/repair/post-inspections/%d/complete", qsB.QuickSignoffID), repair, nil, &comp)
+	mustOK(t, code, e["error"])
+
+	// 游客申诉
+	req(t, "GET", "/guest/notifications", g, nil, &notes)
+	noteID = 0
+	for _, n := range notes {
+		if n.Status == "pending" {
+			noteID = n.ID
+		}
+	}
+	code, e = req(t, "POST", fmt.Sprintf("/guest/notifications/%d/appeal", noteID), g,
+		map[string]interface{}{"reason": "取具时绑带已老化"}, nil)
+	mustOK(t, code, e["error"])
+	// 申诉中同样不能结算
+	code, _ = req(t, "POST", fmt.Sprintf("/counter/quick-signoffs/%d/settle", qsB.QuickSignoffID), counter, nil, nil)
+	if code != http.StatusConflict {
+		t.Fatalf("申诉中结算应 409，实际 %d", code)
+	}
+	// 柜台复核：申诉成立 -> 取消扣减 -> 自动全额结算
+	var res struct {
+		Settled bool `json:"settled"`
+	}
+	code, e = req(t, "POST", fmt.Sprintf("/counter/notifications/%d/resolve", noteID), counter,
+		map[string]interface{}{"upheld": false, "note": "核实库存照片，绑带出库前已磨损"}, &res)
+	mustOK(t, code, e["error"])
+	if !res.Settled {
+		t.Fatal("申诉处理后应自动结算")
+	}
+	var rdB struct {
+		Status      string `json:"status"`
+		DepositLogs []struct {
+			Type   string  `json:"type"`
+			Amount float64 `json:"amount"`
+		} `json:"deposit_logs"`
+	}
+	req(t, "GET", fmt.Sprintf("/rentals/%d", ridB), g, nil, &rdB)
+	deduct, refund = 0, 0
+	for _, l := range rdB.DepositLogs {
+		if l.Type == "deduct_damage" {
+			deduct += l.Amount
+		}
+		if l.Type == "refund" {
+			refund = l.Amount
+		}
+	}
+	if deduct != 0 {
+		t.Fatalf("申诉成立应无扣减，实际 %.2f", deduct)
+	}
+	var detailB struct {
+		DepositTotal float64 `json:"deposit_total"`
+	}
+	req(t, "GET", fmt.Sprintf("/rentals/%d", ridB), g, nil, &detailB)
+	if refund != detailB.DepositTotal {
+		t.Fatalf("申诉成立应全额退还 %.2f，实际 %.2f", detailB.DepositTotal, refund)
+	}
+}
+
 func TestMaintenanceGeneration(t *testing.T) {
 	repair := login(t, "13800000004")
 	var gen struct {

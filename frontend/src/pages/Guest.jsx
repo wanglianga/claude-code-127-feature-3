@@ -11,13 +11,31 @@ export default function GuestPage({ page, go }) {
 
 function MyRentals() {
   const [list, setList] = useState(null)
+  const [notices, setNotices] = useState([])
   const [openId, setOpenId] = useState(null)
-  const load = async () => setList(await api('GET', '/rentals/mine'))
+  const load = async () => {
+    setList(await api('GET', '/rentals/mine'))
+    setNotices(await api('GET', '/guest/notifications'))
+  }
   useEffect(() => { load().catch(() => {}) }, [])
   if (!list) return <Loading />
+  const openNotices = notices.filter(n => n.status === 'pending' || n.status === 'appealed')
   return (
     <div>
       <h2 style={{ margin: 0, fontSize: 18 }}>我的租赁单</h2>
+      {openNotices.length > 0 && (
+        <div className="alert warn" style={{ marginTop: 10 }}>
+          <b>📨 你有 {openNotices.length} 条后检赔付通知待处理：</b>
+          {openNotices.map(n => (
+            <div key={n.id} className="small" style={{ marginTop: 4 }}>
+              单号 {n.rental_code} · {n.type_label} 拟扣 <b>{yuan(n.amount)}</b> · 申诉期至 {n.appeal_deadline}
+              <button className="btn sm" style={{ marginLeft: 8 }} onClick={() => setOpenId(n.rental_id)}>
+                {n.status === 'appealed' ? '查看申诉进度' : '去确认/申诉'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {list.length === 0 && <Empty text="还没有租赁单，去「新建租赁预约」试试" />}
       <div className="table-wrap card" style={{ padding: 0 }}>
         <table>

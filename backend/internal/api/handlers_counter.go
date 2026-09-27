@@ -551,34 +551,7 @@ func (s *Server) assessDamage(tx *sql.Tx, stage string, rentalID, riID, itemID i
 	}
 
 	// 保险联动：有效保单且覆盖该损坏类型 -> 自动立案
-	var productID, policyID int64
-	coverErr := tx.QueryRow(`SELECT ip.product_id, ip.id FROM insurance_policies ip
-		WHERE ip.rental_id=$1 AND ip.status='active' LIMIT 1`, rentalID).
-		Scan(&productID, &policyID)
-	if coverErr == nil {
-		var deductible, capAmt float64
-		var covers pq.StringArray
-		if err := tx.QueryRow(`SELECT deductible, coverage_cap, covers FROM insurance_products WHERE id=$1`,
-			productID).Scan(&deductible, &capAmt, &covers); err == nil {
-			covered := false
-			for _, c := range covers {
-				if c == damageType {
-					covered = true
-					break
-				}
-			}
-			res := rules.CalcClaim(deduction, deductible, capAmt, covered)
-			var claimID int64
-			tx.QueryRow(`INSERT INTO insurance_claims
-				(policy_id, damage_id, amount_requested, deductible, amount_approved, status, note)
-				VALUES ($1,$2,$3,$4,$5,'filed',$6) RETURNING id`,
-				policyID, dID, res.Requested, deductible, res.Approved, res.Message).Scan(&claimID)
-			tx.Exec(`UPDATE damage_reports SET claim_id=$1, status=
-				CASE WHEN status='repair_created' THEN 'repair_created' ELSE 'assessed' END WHERE id=$2`,
-				claimID, dID)
-			tx.Exec(`UPDATE insurance_policies SET status='claimed' WHERE id=$1`, policyID)
-		}
-	}
+	s.fileClaimIfCovered(tx, rentalID, dID, damageType, deduction)
 	return deduction, dID, nil
 }
 

@@ -39,12 +39,19 @@ export const TYPE_LABEL = {
 
 export const RENTAL_STATUS = {
   draft: ['草稿', 'gray'], reserved: ['已预约待取', 'blue'], equipped: ['使用中', 'green'],
-  return_pending: ['归还验损中', 'orange'], returned: ['已归还', 'gray'], cancelled: ['已取消', 'gray']
+  return_pending: ['归还验损中', 'orange'], quick_signed: ['快速签收待后检', 'cyan'],
+  returned: ['已归还', 'gray'], cancelled: ['已取消', 'gray']
 }
 
 export const ITEM_STATUS = {
   suggested: '建议', assigned: '已预留', out: '使用中', exchanged: '已调换',
-  returned_ok: '完好归还', returned_damaged: '损坏归还', repair: '维修中', lost: '丢失'
+  pending_inspection: '待后检', returned_ok: '完好归还', returned_damaged: '损坏归还',
+  repair: '维修中', lost: '丢失'
+}
+
+export const NOTIFY_STATUS = {
+  pending: ['待游客确认', 'orange'], confirmed: ['已确认', 'green'],
+  appealed: ['申诉中', 'red'], resolved: ['已复核', 'blue'], expired: ['申诉期届满默认确认', 'gray']
 }
 
 export const DAMAGE_LABEL = {

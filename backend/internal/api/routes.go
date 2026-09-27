@@ -10,6 +10,7 @@ func (s *Server) registerRoutes() {
 	authFin := s.withAuth("finance", "admin")
 	authAdmin := s.withAuth("admin")
 	staff := s.withAuth("counter", "coach", "repair", "insurance", "finance", "admin")
+	counterFin := s.withAuth("counter", "finance", "admin")
 
 	// 认证
 	s.add("POST", "/api/auth/login", s.login)
@@ -21,6 +22,7 @@ func (s *Server) registerRoutes() {
 	s.add("GET", "/api/models", authAny(s.listModels))
 	s.add("GET", "/api/insurance-products", authAny(s.listInsuranceProducts))
 	s.add("GET", "/api/queue-summary", staff(s.queueSummary))
+	s.add("GET", "/api/peak-board", staff(s.peakBoard))
 
 	// 游客
 	s.add("POST", "/api/guest/suggestions", authGuest(s.suggestions))
@@ -35,6 +37,9 @@ func (s *Server) registerRoutes() {
 	s.add("POST", "/api/rentals/{id}/damage", authGuest(s.reportDamage))
 	s.add("POST", "/api/rentals/{id}/queue-return", authGuest(s.queueReturn))
 	s.add("POST", "/api/rentals/{id}/feedback", authGuest(s.submitFeedback))
+	s.add("GET", "/api/guest/notifications", authGuest(s.myNotifications))
+	s.add("POST", "/api/guest/notifications/{id}/confirm", authGuest(s.confirmNotification))
+	s.add("POST", "/api/guest/notifications/{id}/appeal", authGuest(s.appealNotification))
 
 	// 柜台
 	s.add("GET", "/api/counter/queue", authCounter(s.counterQueue))
@@ -46,6 +51,10 @@ func (s *Server) registerRoutes() {
 	s.add("POST", "/api/counter/damages/{id}/assess", authCounter(s.assessDuringRental))
 	s.add("POST", "/api/counter/returns/{rid}/inspect", authCounter(s.inspectReturnItem))
 	s.add("POST", "/api/counter/returns/{rid}/finish", authCounter(s.finishReturn))
+	s.add("POST", "/api/counter/returns/{rid}/quick-signoff", authCounter(s.quickSignoff))
+	s.add("GET", "/api/counter/notifications", counterFin(s.listNotifications))
+	s.add("POST", "/api/counter/notifications/{id}/resolve", authCounter(s.resolveAppeal))
+	s.add("POST", "/api/counter/quick-signoffs/{id}/settle", counterFin(s.settleQuickSignoff))
 
 	// 教练
 	s.add("GET", "/api/coach/courses", authCoach(s.coachCourses))
@@ -57,6 +66,9 @@ func (s *Server) registerRoutes() {
 	s.add("GET", "/api/repair/maintenance", authRepair(s.listMaintenance))
 	s.add("POST", "/api/repair/maintenance/generate", authRepair(s.generateMaintenance))
 	s.add("POST", "/api/repair/maintenance/{id}/resolve", authRepair(s.resolveMaintenance))
+	s.add("GET", "/api/repair/post-inspections", authRepair(s.listPostInspections))
+	s.add("POST", "/api/repair/post-inspections/{id}/inspect", authRepair(s.postInspectItem))
+	s.add("POST", "/api/repair/post-inspections/{id}/complete", authRepair(s.completePostInspection))
 
 	// 保险
 	s.add("GET", "/api/insurance/claims", authIns(s.listClaims))

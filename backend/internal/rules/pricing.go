@@ -5,6 +5,9 @@ package rules
 // 夜场加价系数（夜场租赁每件租金上浮 20%，押金不变）
 const NightPremiumRate = 0.20
 
+// 维修间同时在修容量（高峰看板展示利用率）
+const RepairShopCapacity = 8
+
 // 延时费用：每超时 1 小时按基础租金/4 加收（取日租金 4 小时折算）
 func LateFee(hours float64, baseRentalFee float64) float64 {
 	if hours <= 0 {
